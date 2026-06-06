@@ -645,12 +645,36 @@ $$\text{RMSE} = \sqrt{\frac{1}{N} \sum_{i=1}^{N} (\hat{x}_i - x_i^{\text{truth}}
 
 ## 13. Original paper and citation
 
-This code is based on the following research:
+This code accompanies the following peer-reviewed paper:
 
-> **Machine Learning-Augmented Data Assimilation**
-> [Original paper citation — see upstream repository for details]
->
-> Upstream repository: [https://github.com/climprocpred/machine_learning_DA_part_1](https://github.com/climprocpred/machine_learning_DA_part_1)
+> Howard, L. J., Subramanian, A., & Hoteit, I. (2024).
+> **A machine learning augmented data assimilation method for high-resolution observations.**
+> *Journal of Advances in Modeling Earth Systems*, 16(1), e2023MS003774.
+> https://doi.org/10.1029/2023MS003774
+
+**BibTeX entry:**
+
+```bibtex
+@article{howard2024mlda,
+  author  = {Howard, Lucas J. and Subramanian, Aneesh and Hoteit, Ibrahim},
+  title   = {A Machine Learning Augmented Data Assimilation Method for High-Resolution Observations},
+  journal = {Journal of Advances in Modeling Earth Systems},
+  year    = {2024},
+  volume  = {16},
+  number  = {1},
+  pages   = {e2023MS003774},
+  doi     = {10.1029/2023MS003774},
+  url     = {https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2023MS003774}
+}
+```
+
+**Key result from the paper:** The ML-augmented method reduces analysis RMSE by
+up to **37%** compared to an EnKF that ignores high-resolution observations,
+and produces ensemble forecasts that remain more accurate at lead times up to 10 days.
+
+Upstream code repository: [https://github.com/climprocpred/machine_learning_DA_part_1](https://github.com/climprocpred/machine_learning_DA_part_1)
+
+---
 
 This tutorial fork (`fers_ml_da_lorenz`) was created for the FERS summer school.
 The tutorial notebook, pre-generated datasets, and educational documentation were
