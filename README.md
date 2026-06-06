@@ -20,8 +20,9 @@
 9. [Understanding the source code](#9-understanding-the-source-code)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Extension ideas](#11-extension-ideas)
-12. [Glossary](#12-glossary)
-13. [Original paper and citation](#13-original-paper-and-citation)
+12. [Two-week group research plan](#12-two-week-group-research-plan)
+13. [Glossary](#13-glossary)
+14. [Original paper and citation](#14-original-paper-and-citation)
 
 ---
 
@@ -585,7 +586,369 @@ of what students have explored:
 
 ---
 
-## 12. Glossary
+## 12. Two-week group research plan
+
+This section is for a group of 3–4 students who want to go beyond the tutorial
+and conduct original research over two weeks. The work is divided into four
+independent but complementary tracks, each producing a result comparable against
+the same baseline (the paper's augmented method).
+
+**Baseline to beat:**
+- Analysis RMSE of the augmented EnKF+CNN method on sparse observations (25% coverage)
+- Rank histogram calibration of the analysis ensemble
+- 10-day ensemble forecast accuracy (Figure 5 in the paper)
+
+The full research plan, including all code scaffolding, is also available as a
+standalone file: [`RESEARCH_PLAN.md`](RESEARCH_PLAN.md)
+
+### Git workflow for collaboration
+
+```bash
+# Each student creates their own branch from main
+git checkout -b track-A-smooth-localization    # Student 1
+git checkout -b track-B-architecture          # Student 2
+git checkout -b track-C-adaptive-augmentation # Student 3
+git checkout -b track-D-robustness            # Student 4
+
+# Push your branch regularly so others can see your work
+git push origin track-A-smooth-localization
+
+# At the end of week 2, open a pull request into main for review
+gh pr create --base main --title "Track A: Smooth localization results"
+```
+
+**Ground rules for shared code:**
+- Do not modify `L96.py`, `EnKF.py`, `NeuralNet.py`, or `Experiment.py` directly on `main`.
+  Instead, subclass the relevant class inside your track's notebook, or work on your own branch.
+- The pre-generated datasets (`tutorial_data.nc`, `tutorial_enkf_full.nc`) are read-only
+  shared inputs — load them, don't overwrite them.
+- At the end of Week 1, hold a 30-minute group sync to share interim RMSE numbers
+  so everyone can sanity-check against the same baseline.
+
+### Week 1 — Everyone (Days 1–2)
+
+Before splitting into tracks, all students should:
+
+1. Run `tutorial_notebook.ipynb` end-to-end and confirm your RMSE numbers match
+   the expected values in Section 7 of this README.
+2. Read Sections 3–5 of the tutorial notebook carefully, paying attention to the
+   code in `EnKF.py`, `Experiment.py`, and `NeuralNet.py`.
+3. Read the paper (Howard, Subramanian & Hoteit, 2024) Sections 2–4.
+4. Run the shared baseline script below and record your number:
+
+```python
+# baseline.py — run once and share the result with the group
+from Experiment import Experiment
+from NeuralNet import NeuralNet
+import numpy as np
+
+np.random.seed(0)
+N, F, dt, T = 40, 8.0, 0.05, 200.0
+x0 = F * np.ones(N); x0[0] = F + 0.01
+
+# EnKF training run (full obs, best sensitivity case: loc=7)
+exp = Experiment(settings={'N':N,'F':F,'dt':dt,'nens':100,'loc':7,'gamma':1,'frac':1})
+exp.ds['xx'] = exp.get_true(x0, T)
+exp.r = float(exp.ds.xx.std()) * 0.3
+exp.ds['yy'] = exp.makeobs(exp.r)
+exp.assimilate(exp.make_ensemble(x0, exp.r))
+
+# Train CNN
+nn = NeuralNet(nlayers=3, filter_size=3, N=N)
+nn.buildmodel()
+nn.train(0.7, 20, 'adam', exp.ds)
+
+# Augmented experiment (sparse obs)
+exp2 = Experiment(settings={'N':N,'F':F,'dt':dt,'nens':100,'loc':7,'gamma':1,'frac':0.25})
+exp2.ds['xx'] = exp.ds.xx
+exp2.r = exp.r
+exp2.ds['yy'] = exp2.makeobs(exp2.r)
+exp2.assimilate(exp2.make_ensemble(x0, exp2.r), nn=nn)
+
+xa = exp2.ds.xaens.mean('ensemble')
+xx = exp2.ds.xx.sel(time=xa.time)
+print(f"Baseline augmented RMSE: {float(np.sqrt(((xa-xx)**2).mean())):.4f}")
+```
+
+---
+
+### Track A — Better classical DA: smooth localization and adaptive inflation
+**Best for:** A student comfortable with linear algebra and statistics who wants
+to understand the classical DA side more deeply. No ML required.
+
+The paper uses two crude choices: a **hard-cutoff localization** (covariance
+snaps to zero at distance `loc`) and a **fixed inflation factor** (`gamma` = constant).
+Both have well-known improvements used in all operational forecast systems.
+
+#### Part 1: Gaspari-Cohn smooth localization (Days 3–5)
+
+Replace `EnKF.localize()` with the Gaspari-Cohn (1999) fifth-order piecewise
+rational taper, which decays smoothly to zero rather than cutting off abruptly:
+
+```python
+def gaspari_cohn(distance, half_width):
+    r = abs(distance) / half_width
+    if r >= 2.0:   return 0.0
+    elif r >= 1.0: return (r**5/12 - r**4/2 + 5*r**3/8 + 5*r**2/3 - 5*r + 4 - 2/(3*r)) / 3
+    else:          return 1 - 5*r**2/3 + 5*r**3/8 + r**4/2 - r**5/4
+
+class EnKFGC(EnKF):
+    def localize(self, cov):
+        for i in range(self.nvars):
+            for j in range(self.nvars):
+                mid = abs(i - j)
+                out = self.nvars - max(i,j) + min(i,j)
+                dist = min(mid, out)
+                cov[i, j] *= gaspari_cohn(dist, self.loc)
+        return cov
+```
+
+> Reference: Gaspari & Cohn (1999). *Q. J. Roy. Meteor. Soc.* 125, 723–757. Eq. 4.10.
+
+**Key question:** For the same `loc`, does GC localization improve RMSE over the
+hard cutoff? Does the optimal `loc` value change?
+
+#### Part 2: Adaptive multiplicative inflation (Days 5–7)
+
+After each analysis step, estimate the innovation variance and compare it to what
+the ensemble predicted. Use the ratio to update `gamma` automatically:
+
+```
+gamma_{t+1} = gamma_t * <(y - H x^f)^2> / diag(H P^f H^T + R)
+```
+
+Implement this in a subclass of `Experiment` that overrides `assimilate()` to
+recompute `gamma` at each step and log its time series.
+
+**Key question:** Does adaptive inflation outperform the paper's best fixed value
+(`gamma=1.05`)? What does the time series of `gamma_t` look like?
+
+#### Deliverables for Track A
+A notebook `track_A_localization_inflation.ipynb` with: RMSE vs. `loc` for hard
+vs. GC localization; RMSE vs. fixed `gamma`; adaptive `gamma` time series; rank
+histograms for each method.
+
+**Reading:** Gaspari & Cohn (1999); Anderson (2009). *Tellus A* 61, 72–83.
+
+---
+
+### Track B — Better neural network architecture
+**Best for:** A student interested in deep learning who wants to explore
+how architecture choices affect performance.
+
+The paper's CNN is deliberately minimal (3 layers, 5 filters, kernel 3). It has
+no temporal memory, only predicts the analysis mean, and uses an architecture that
+was not tuned. There is substantial room to improve each of these.
+
+#### Part 1: Architecture search (Days 3–4)
+
+Systematically compare CNN architectures, training each on the same dataset:
+
+```python
+architectures = [
+    ('paper_baseline', 3, 3, 5),   # (name, nlayers, filter_size, n_filters)
+    ('wider',          3, 3, 16),
+    ('deeper',         5, 3, 5),
+    ('larger_kernel',  3, 5, 5),
+    ('wider_deeper',   5, 3, 16),
+]
+```
+
+Note: changing `nlayers` or `filter_size` changes the padding `offset` — update
+`NeuralNet.make_input()` accordingly.
+
+#### Part 2: Adding temporal context (Days 4–6)
+
+The CNN only sees the state at time `t`. Forecast errors at `t` are correlated
+with errors at `t-1` and `t-2`. Stack the last `k` forecast states as extra input
+channels and modify `NeuralNet.train()` to build sliding-window pairs.
+
+```
+Current:  (N+2*offset, 2 channels)    ← x^f_t,  y_t - x^f_t
+Extended: (N+2*offset, 2+k channels)  ← x^f_t, y_t-x^f_t, x^f_{t-1}, x^f_{t-2}, ...
+```
+
+**Key question:** Does adding 1, 2, or 3 previous steps improve RMSE? At what
+point does it stop helping?
+
+#### Part 3: Predicting analysis uncertainty (Days 6–7)
+
+Modify `buildmodel()` to output 2 channels (mean + log-variance) and train with
+negative log-likelihood loss. Then use the predicted spread to rescale the ensemble
+rather than just shifting it:
+
+```python
+xa_mean, log_var = nn.assimilate(xf, y)
+xa_std = np.exp(0.5 * log_var)
+scale  = xa_std / xf.std(axis=1)
+for j in range(N):
+    xaens[j, :, i] = xa_mean[j] + scale[j] * (xfens[j, :, i] - xf[j])
+```
+
+**Key question:** Does a probabilistic CNN produce better-calibrated rank
+histograms? Does it also improve RMSE?
+
+#### Deliverables for Track B
+A notebook `track_B_architectures.ipynb` with: architecture comparison table
+(params, val RMSE, augmented RMSE); training curves; temporal context ablation
+(k=0,1,2,3); rank histograms for deterministic vs. probabilistic CNN.
+
+**Reading:** Tutorial notebook Part 4; Lguensat et al. (2017). *MWR* 145, 4093–4107.
+
+---
+
+### Track C — Better augmentation strategy
+**Best for:** A student interested in algorithm design — how and when to
+combine the two components.
+
+The paper uses a fixed schedule: CNN on odd steps, EnKF on even steps, regardless
+of the system state. There are two dimensions to improve: *when* to use each
+method, and *how* to apply the CNN output to the ensemble.
+
+#### Part 1: Adaptive scheduling (Days 3–5)
+
+Use the **ensemble spread** to decide which method to apply at each step. When
+spread is low (ensemble collapsed), use EnKF to restore diversity; when spread is
+healthy, use the cheaper CNN:
+
+```python
+SPREAD_THRESHOLD = 0.5  # tune this
+
+spread_t = xfens[:, :, i].std(axis=1).mean()
+if spread_t < SPREAD_THRESHOLD:
+    h = self.make_obs()
+    xaens[:, :, i] = enkf.ensemble_assim(xfens[:, :, i], y, h, self.r)
+else:
+    xpmean = nn.assimilate(xfens[:, :, i].mean(axis=1), y.values)
+    delta  = xfens[:, :, i].mean(axis=1) - xpmean
+    for j in range(self.N):
+        xaens[j, :, i] = xfens[j, :, i] - delta[j]
+```
+
+Also test fixed ratios: CNN every 1st, 2nd, 3rd, 4th, 8th step.
+
+#### Part 2: Better ensemble updating (Days 5–7)
+
+The paper mean-shifts all members by the same delta. Test three alternatives:
+
+**Nudging (relaxation):** pull each member toward the CNN mean
+```python
+alpha = 0.5
+xaens[:, j, i] = alpha * xpmean + (1 - alpha) * xfens[:, j, i]
+```
+
+**Spread scaling:** shift the mean and scale the perturbations
+```python
+pert = xfens[:, j, i] - xfens[:, :, i].mean(axis=1)
+xaens[:, j, i] = xpmean + (target_spread / xfens[:, :, i].std(axis=1)) * pert
+```
+
+**Per-member CNN:** apply the CNN independently to each ensemble member's forecast.
+
+**Key question:** Which update rule produces the best-calibrated ensemble while
+also minimizing RMSE?
+
+#### Deliverables for Track C
+A notebook `track_C_augmentation.ipynb` with: RMSE vs. CNN frequency for fixed
+schedules; adaptive vs. best fixed schedule; rank histograms and RMSE for the
+three update rules; time series of ensemble spread.
+
+**Reading:** Bocquet et al. (2020). *Foundations of Data Science* 2, 55–80.
+
+---
+
+### Track D — Robustness and generalization
+**Best for:** A student interested in scientific questions rather than
+implementation — more experiments, less new code.
+
+The paper demonstrates the augmented method under one specific setup (F=8, N=40,
+T=2000). Real applications require robustness. This track asks: **how fragile
+is the augmented method?**
+
+#### Part 1: Model error (Days 3–5)
+
+Train on a perfect-model run (F=8), then test with a biased forecast model:
+
+```python
+F_true     = 8.0   # truth and observations generated with this
+F_forecast = 7.5   # ensemble forecasts use this wrong value
+```
+
+Test biases of F ± 0.25, ± 0.5, ± 1.0. Implement by subclassing `Experiment`
+and changing the `L96` object used in the forecast step of `assimilate()`.
+
+**Key question:** Is the augmented method more or less robust to model bias
+than the standard EnKF?
+
+#### Part 2: Sparsity generalization (Days 5–6)
+
+Train the CNN on full observations, then evaluate across coverage fractions:
+
+```python
+fracs = [0.1, 0.2, 0.25, 0.33, 0.5, 0.75, 1.0]
+```
+
+Also test: train a CNN at 50% coverage and deploy at 25%. Does transfer across
+sparsity levels work?
+
+#### Part 3: Forcing sensitivity (Days 6–7)
+
+Repeat the full augmented experiment (train EnKF → train CNN → augmented test)
+for `F=5` (weakly chaotic), `F=8` (paper default), and `F=12` (very turbulent).
+
+**Key question:** Does the augmented method help more in high-chaos or low-chaos
+regimes? Which regime is the CNN easiest to train on?
+
+#### Part 4 (bonus): Spatially averaged observations
+
+Replace point observations with area averages (mimicking satellite footprints):
+
+```python
+def make_superobs(x, frac, window=3):
+    obs = []
+    for i in range(0, N, window):
+        if np.random.rand() < frac:
+            obs.append((i, x[i:i+window].mean()))
+    return obs
+```
+
+#### Deliverables for Track D
+A notebook `track_D_robustness.ipynb` with: RMSE vs. model error bias; RMSE vs.
+observation fraction; RMSE across F=5, 8, 12; (bonus) spatially-averaged obs results.
+
+**Reading:** Lorenz (1996). *Predictability — a problem partly solved*;
+Evensen et al. (2022). *Data Assimilation Fundamentals*, Chapters 1–3 (open access).
+
+---
+
+### Week 2 integration: comparing all tracks
+
+On the final day, each student fills in a shared comparison table and submits
+a pull request to `main`:
+
+```python
+# shared_comparison.py — each student fills in their best result
+baseline_rmse = ???   # from the shared baseline script above
+
+results = {
+    'Baseline (paper)':           {'rmse': ???, 'method': 'EnKF+CNN, fixed alternation, hard loc'},
+    'Track A: GC + adaptive inf': {'rmse': ???, 'method': 'GC localization + adaptive inflation'},
+    'Track B: best architecture': {'rmse': ???, 'method': 'wider CNN + temporal context'},
+    'Track C: adaptive schedule': {'rmse': ???, 'method': 'spread-adaptive EnKF/CNN switching'},
+    'Track D: model error F±0.5': {'rmse': ???, 'method': 'robustness to biased forecast model'},
+}
+
+for name, d in results.items():
+    pct = (baseline_rmse - d['rmse']) / baseline_rmse * 100
+    print(f"{name:38s}: RMSE={d['rmse']:.4f}  ({pct:+.1f}% vs baseline)")
+```
+
+Create a `group_results.ipynb` that loads each track's saved NetCDF files and
+produces a single comparison figure for the group presentation.
+
+---
+
+## 13. Glossary
 
 **Analysis** — The updated state estimate produced by data assimilation after incorporating observations. Denoted $\mathbf{x}^a$.
 
@@ -643,7 +1006,7 @@ $$\text{RMSE} = \sqrt{\frac{1}{N} \sum_{i=1}^{N} (\hat{x}_i - x_i^{\text{truth}}
 
 ---
 
-## 13. Original paper and citation
+## 14. Original paper and citation
 
 This code accompanies the following peer-reviewed paper:
 
