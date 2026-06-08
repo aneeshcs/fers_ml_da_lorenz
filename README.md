@@ -1,7 +1,7 @@
 # FERS ML + Data Assimilation Tutorial
 ## Machine Learning-Augmented Data Assimilation with the Lorenz-96 System
 
-> **Who this is for:** First-year graduate students in atmospheric science, oceanography,
+> **Who this is for:** Graduate students in atmospheric science, oceanography,
 > or related fields. No prior knowledge of machine learning or data assimilation is assumed.
 > You should be comfortable with basic Python and have seen a differential equation before.
 
