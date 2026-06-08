@@ -173,7 +173,7 @@ inflation (`gamma=1.05`, case s6)? What does the time series of `gamma_t` look l
 
 ### Deliverables for Track A
 
-- A notebook `track_A_localization_inflation.ipynb` with:
+- A notebook `tracks/track_A/track_A_localization_inflation.ipynb` with:
   - RMSE vs. `loc` comparison: hard cutoff vs. Gaspari-Cohn
   - RMSE vs. `gamma` comparison: fixed vs. adaptive
   - Time series of adaptive `gamma_t`
@@ -280,7 +280,7 @@ than the deterministic baseline? Does it improve RMSE as well as spread?
 
 ### Deliverables for Track B
 
-- A notebook `track_B_architectures.ipynb` with:
+- A notebook `tracks/track_B/track_B_architectures.ipynb` with:
   - Architecture comparison table (params, val RMSE, augmented RMSE)
   - Training curves for each architecture
   - Temporal context ablation (k=0,1,2,3)
@@ -375,7 +375,7 @@ while also minimizing RMSE?
 
 ### Deliverables for Track C
 
-- A notebook `track_C_augmentation.ipynb` with:
+- A notebook `tracks/track_C/track_C_augmentation.ipynb` with:
   - RMSE vs. CNN frequency (fixed schedules: every 1, 2, 3, 4, 8 steps)
   - Adaptive vs. best fixed schedule comparison
   - Rank histograms and RMSE for the three update rules
@@ -479,7 +479,7 @@ or does it require point observations?
 
 ### Deliverables for Track D
 
-- A notebook `track_D_robustness.ipynb` with:
+- A notebook `tracks/track_D/track_D_robustness.ipynb` with:
   - RMSE vs. model error bias: EnKF alone vs. augmented
   - RMSE vs. observation fraction: augmented vs. sparse EnKF
   - RMSE for F=5, 8, 12: augmented vs. sparse EnKF

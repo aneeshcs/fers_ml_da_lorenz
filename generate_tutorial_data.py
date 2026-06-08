@@ -98,7 +98,7 @@ rmse_sparse = float(np.sqrt(
 print(f"  Sparse EnKF RMSE: {rmse_sparse:.4f}")
 
 # ── Build combined NetCDF dataset ─────────────────────────────────────────
-print("\nStep 3/3: Saving to tutorial_data.nc...")
+print("\nStep 3/3: Saving to tutorial_data/tutorial_data.nc...")
 
 t_da = exp_full.ds.xaens.time.values
 
@@ -134,8 +134,9 @@ ds_out = xr.Dataset(
     }
 )
 
-ds_out.to_netcdf('tutorial_data.nc')
-print(f"  Saved: tutorial_data.nc")
+import os; os.makedirs('tutorial_data', exist_ok=True)
+ds_out.to_netcdf('tutorial_data/tutorial_data.nc')
+print(f"  Saved: tutorial_data/tutorial_data.nc")
 print()
 print("=" * 60)
 print("  Dataset summary")
@@ -147,6 +148,6 @@ print(f"  Sparse-obs EnKF RMSE:  {rmse_sparse:.4f}")
 print()
 print("  Load in notebook with:")
 print("    import xarray as xr")
-print("    ds = xr.open_dataset('tutorial_data.nc')")
+print("    ds = xr.open_dataset('tutorial_data/tutorial_data.nc')")
 print("    xx = ds.xx         # truth")
 print("    xa = ds.xaens_full # full-obs EnKF analyses")
